@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Low Visibility Vehicle Guidance: Simulation</title>
+<style>
+:root{--bg:#f2f5f7;--panel:#fff;--ink:#14212b;--mut:#5b6b77;--line:#d3dce2;--acc:#0b7a75;--ok:#1d8a4b;--cau:#b7791f;--warn:#d9480f;--brk:#c0172b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c151c;--panel:#142029;--ink:#e6eef3;--mut:#93a5b1;--line:#263642;--acc:#35c4bc;--ok:#4cc27d;--cau:#e0a93b;--warn:#ff7a3d;--brk:#ff4d5e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:1.6rem;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--mut);margin:0 0 18px;max-width:70ch}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:14px}
+label{display:block;font-size:.85rem;color:var(--mut);margin-bottom:4px}
+.val{color:var(--ink);font-weight:600}
+input[type=range],select{width:100%}
+select,button{font:inherit;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+button{cursor:pointer}
+button.primary{background:var(--acc);color:#04201f;border-color:var(--acc);font-weight:600}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.presets button{font-size:.8rem;padding:3px 8px}
+.views{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:14px}
+.views h2{font-size:.95rem;margin:0 0 6px}
+.views p{font-size:.8rem;color:var(--mut);margin:6px 0 0}
+canvas{width:100%;display:block;border-radius:6px;background:#000;aspect-ratio:4/3}
+#alert{border-radius:10px;padding:14px 16px;margin-bottom:14px;color:#fff;font-weight:600;font-size:1.15rem;transition:background .15s}
+#alert small{display:block;font-weight:400;font-size:.85rem;opacity:.92}
+.cmp{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.bar{position:relative;height:26px;background:var(--bg);border:1px solid var(--line);border-radius:6px;margin:8px 0 2px;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--acc)}
+.bar.rgb i{background:var(--cau)}
+.bar b{position:absolute;top:0;bottom:0;width:3px;background:var(--brk)}
+.row{display:flex;justify-content:space-between;font-size:.85rem}
+.verdict{margin-top:10px;font-size:.95rem}
+.note{font-size:.8rem;color:var(--mut);margin-top:14px;max-width:80ch}
+@media (prefers-reduced-motion:reduce){#alert{transition:none}}
+</style>
+</head>
+<body>
+<main>
+<h1>Low Visibility Vehicle Guidance System: live simulation</h1>
+<p class="sub">Drive toward a hidden obstacle and change the Visibility Index. Compare a camera-only ADAS with our thermal + LiDAR system that adapts its alert sensitivity.</p>
+
+<section class="panel controls" aria-label="Controls">
+<div>
+<label for="vi">Visibility Index (STM32): <span class="val" id="viv">35</span> / 100</label>
+<input id="vi" type="range" min="0" max="100" value="35">
+<div class="presets" id="presets"></div>
+</div>
+<div>
+<label for="ob">Obstacle</label>
+<select id="ob"><option value="1">Pedestrian</option><option value="0.9">Animal</option><option value="0.7">Stalled vehicle</option></select>
+<label for="sp" style="margin-top:8px">Vehicle speed: <span class="val" id="spv">60</span> km/h</label>
+<input id="sp" type="range" min="20" max="120" step="5" value="60">
+</div>
+<div>
+<label for="dist">Distance to obstacle: <span class="val" id="dv">150</span> m</label>
+<input id="dist" type="range" min="5" max="150" value="150">
+<div class="presets"><button class="primary" id="play" type="button">Run approach</button><button id="reset" type="button">Reset</button></div>
+</div>
+</section>
+
+<div id="alert" role="status" aria-live="polite">Clear road<small>No obstacle detected yet.</small></div>
+
+<section class="views" aria-label="Sensor views">
+<div class="panel"><h2>Camera-only ADAS (RGB)</h2><canvas id="c1" width="400" height="300" aria-label="RGB camera view"></canvas><p>Fog scatters light, so the obstacle fades into the white-out.</p></div>
+<div class="panel"><h2>LWIR thermal camera</h2><canvas id="c2" width="400" height="300" aria-label="Thermal camera view"></canvas><p>Heat passes through fog far better than visible light.</p></div>
+<div class="panel"><h2>360° LiDAR grid (top view)</h2><canvas id="c3" width="400" height="300" aria-label="LiDAR occupancy grid"></canvas><p>Range shrinks and points drop out as fog thickens.</p></div>
+</section>
+
+<section class="panel" aria-label="Comparison">
+<div class="cmp">
+<div>
+<div class="row"><span>Camera-only detects at</span><span class="val" id="rgbD">-</span></div>
+<div class="bar rgb"><i id="rgbB"></i><b id="stopM1"></b></div>
+<div class="row"><span>Our system detects at</span><span class="val" id="sysD">-</span></div>
+<div class="bar"><i id="sysB"></i><b id="stopM2"></b></div>
+<div class="row" style="color:var(--mut)"><span>0 m</span><span>Red line = stopping distance <span id="stopV"></span></span><span>150 m</span></div>
+</div>
+<div>
+<div class="row"><span>Fusion confidence now</span><span class="val" id="conf">0%</span></div>
+<div class="row"><span>Alert threshold (adapts to visibility)</span><span class="val" id="thr">0%</span></div>
+<p class="verdict" id="verdict"></p>
+</div>
+</div>
+</section>
+<p class="note">Illustrative model, not measured data. RGB range uses a Koschmieder-style contrast falloff; thermal and LiDAR ranges are simple assumptions that shrink with fog. Stopping distance assumes 1 s reaction time and 6 m/s² braking. Replace the constants in the script with your own test results once you have them.</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const vi=$('vi'),ob=$('ob'),sp=$('sp'),dist=$('dist');
+let timer=null;
+const presets=[['Clear sky',90],['Light fog',60],['Heavy smog',35],['Dense valley mist',15]];
+presets.forEach(([n,v])=>{const b=document.createElement('button');b.type='button';b.textContent=n+' ('+v+')';b.onclick=()=>{vi.value=v;draw()};$('presets').appendChild(b)});
+
+function model(){
+  const V=+vi.value,o=+ob.value,v=+sp.value/3.6,d=+dist.value;
+  const vis=20+V*3;                       // meteorological visibility (m)
+  const rgbR=vis*0.41;                    // distance where contrast stays above classification limit
+  const thR=(60+V*0.8)*(0.8+0.2*o)+20;    // thermal range (m)
+  const liR=40+V*0.8;                     // LiDAR range (m)
+  const sig=(x,R)=>Math.max(0,1-Math.pow(x/R,2));
+  const sT=sig(d,thR)*o, sL=sig(d,liR);
+  const conf=0.6*sT+0.4*sL;
+  const thr=0.12+0.5*V/100;               // lower in fog => earlier warnings
+  const stop=v*1.0+v*v/12;
+  // find first distance (from far) where system conf >= thr
+  let sysD=0;for(let x=150;x>=0;x-=0.5){if(0.6*sig(x,thR)*o+0.4*sig(x,liR)>=thr){sysD=x;break}}
+  return {V,o,d,vis,rgbR,thR,liR,sT,sL,conf,thr,stop,sysD,rgbD:Math.min(150,rgbR)};
+}
+
+function noise(){return Math.random()-.5}
+function scene(c,m,mode){
+  const g=c.getContext('2d'),w=c.width,h=c.height,hz=h*.42;
+  const k=8/(m.d+8),oy=hz+(h-hz)*k*.92,sz=150*k,ox=w/2;
+  const body=(col,a)=>{g.save();g.globalAlpha=a;g.fillStyle=col;
+    if(m.o===0.7){g.fillRect(ox-sz*.55,oy-sz*.5,sz*1.1,sz*.45);g.fillRect(ox-sz*.35,oy-sz*.85,sz*.7,sz*.4)}
+    else if(m.o===0.9){g.beginPath();g.ellipse(ox,oy-sz*.35,sz*.45,sz*.22,0,0,7);g.fill();g.fillRect(ox+sz*.25,oy-sz*.7,sz*.12,sz*.35);g.fillRect(ox-sz*.35,oy-sz*.2,sz*.08,sz*.2);g.fillRect(ox+sz*.25,oy-sz*.2,sz*.08,sz*.2)}
+    else{g.beginPath();g.arc(ox,oy-sz*.95,sz*.13,0,7);g.fill();g.fillRect(ox-sz*.12,oy-sz*.8,sz*.24,sz*.5);g.fillRect(ox-sz*.12,oy-sz*.3,sz*.09,sz*.3);g.fillRect(ox+.03*sz,oy-sz*.3,sz*.09,sz*.3)}
+    g.restore()};
+  if(mode==='rgb'){
+    let s=g.createLinearGradient(0,0,0,h);s.addColorStop(0,'#7f9fbd');s.addColorStop(hz/h,'#c9d6df');s.addColorStop(hz/h,'#4a4f52');s.addColorStop(1,'#2d3033');
+    g.fillStyle=s;g.fillRect(0,0,w,h);
+    g.fillStyle='#5b6063';g.beginPath();g.moveTo(w*.46,hz);g.lineTo(w*.54,hz);g.lineTo(w*.95,h);g.lineTo(w*.05,h);g.fill();
+    const T=Math.exp(-3.912*m.d/m.vis);        // contrast transmission
+    body('#2b2b33',Math.max(0,T));
+    const fa=Math.min(.95,.12+(1-m.V/100)*.8);
+    g.fillStyle='rgba(220,228,233,'+fa+')';g.fillRect(0,0,w,h);
+    g.fillStyle='rgba(255,255,255,.8)';g.font='13px sans-serif';g.fillText(T>0.2?'Obstacle visible':'Obstacle lost in fog',10,20);
+  }else{
+    g.fillStyle='#0a0612';g.fillRect(0,0,w,h);
+    g.fillStyle='#1d1230';g.beginPath();g.moveTo(w*.46,hz);g.lineTo(w*.54,hz);g.lineTo(w*.95,h);g.lineTo(w*.05,h);g.fill();
+    const a=Math.min(1,m.sT*1.4);
+    if(a>0){const gr=g.createRadialGradient(ox,oy-sz*.5,2,ox,oy-sz*.5,sz*.9);gr.addColorStop(0,'rgba(255,240,150,'+a+')');gr.addColorStop(.5,'rgba(240,90,40,'+a*.7+')');gr.addColorStop(1,'rgba(90,20,120,0)');g.fillStyle=gr;g.fillRect(0,0,w,h);body('rgba(255,235,140,1)',a)}
+    for(let i=0;i<500;i++){g.fillStyle='rgba(120,90,200,'+Math.random()*.12+')';g.fillRect(Math.random()*w,Math.random()*h,2,2)}
+    g.fillStyle='rgba(255,255,255,.85)';g.font='13px sans-serif';g.fillText(a>0.15?'Heat signature detected':'Below thermal threshold',10,20);
+  }
+}
+function lidar(c,m){
+  const g=c.getContext('2d'),w=c.width,h=c.height,cx=w/2,cy=h*.82,px=(h*.78)/150;
+  g.fillStyle='#06140f';g.fillRect(0,0,w,h);
+  g.strokeStyle='rgba(60,200,140,.25)';g.lineWidth=1;g.fillStyle='rgba(120,220,170,.7)';g.font='11px sans-serif';
+  [25,50,100,150].forEach(r=>{g.beginPath();g.arc(cx,cy,r*px,Math.PI,2*Math.PI);g.stroke();g.fillText(r+' m',cx+4,cy-r*px+11)});
+  const R=m.liR,keep=.35+.65*m.V/100;
+  for(let a=Math.PI*1.08;a<Math.PI*1.92;a+=0.012){
+    if(Math.random()>keep)continue;
+    const r=R*(.97+Math.random()*.03);
+    g.fillStyle='rgba(60,210,150,.55)';g.fillRect(cx+Math.cos(a)*r*px,cy+Math.sin(a)*r*px,2,2)}
+  if(m.d<=R){const n=14+Math.round(30*m.sL);
+    for(let i=0;i<n;i++){g.fillStyle='#ffd43b';g.fillRect(cx+noise()*8+noise()*3,cy-m.d*px+noise()*6,3,3)}}
+  g.fillStyle='#35c4bc';g.fillRect(cx-5,cy,10,14);
+  g.fillStyle='rgba(255,255,255,.85)';g.font='13px sans-serif';g.fillText(m.d<=R?'Obstacle in LiDAR range':'Beyond LiDAR range',10,20);
+}
+function draw(){
+  const m=model();
+  $('viv').textContent=vi.value;$('spv').textContent=sp.value;$('dv').textContent=dist.value;
+  scene($('c1'),m,'rgb');scene($('c2'),m,'thermal');lidar($('c3'),m);
+  $('rgbD').textContent=Math.round(m.rgbD)+' m';$('sysD').textContent=Math.round(m.sysD)+' m';
+  $('rgbB').style.width=(m.rgbD/150*100)+'%';$('sysB').style.width=(m.sysD/150*100)+'%';
+  const sp_=Math.min(100,m.stop/150*100);$('stopM1').style.left=sp_+'%';$('stopM2').style.left=sp_+'%';
+  $('stopV').textContent='('+Math.round(m.stop)+' m)';
+  $('conf').textContent=Math.round(m.conf*100)+'%';$('thr').textContent=Math.round(m.thr*100)+'%';
+  const rgbOK=m.rgbD>m.stop*1.1,sysOK=m.sysD>m.stop*1.1;
+  $('verdict').innerHTML='Camera-only: <b>'+(rgbOK?'sees it in time':'detects too late to stop')+'</b>. Our system: <b>'+(sysOK?'detects with room to stop':'detects too late at this speed')+'</b>.';
+  // alert level
+  const det=m.conf>=m.thr;let lvl,txt,col;
+  if(!det){lvl=0;txt='Clear road';col='var(--ok)';}
+  else if(m.d<=m.stop*1.1){lvl=3;txt='BRAKE NOW';col='var(--brk)';}
+  else if(m.d<=m.stop*1.6){lvl=2;txt='Warning: obstacle ahead';col='var(--warn)';}
+  else{lvl=1;txt='Caution: obstacle detected';col='var(--cau)';}
+  const a=$('alert');a.style.background=col;
+  a.innerHTML=txt+'<small>'+(det?'Obstacle at '+Math.round(m.d)+' m. Stopping distance '+Math.round(m.stop)+' m.':'Fusion confidence below the alert threshold for visibility '+m.V+'.')+'</small>';
+}
+[vi,ob,sp,dist].forEach(e=>e.addEventListener('input',draw));
+$('play').onclick=()=>{clearInterval(timer);if(+dist.value<=6)dist.value=150;
+  timer=setInterval(()=>{dist.value=Math.max(5,+dist.value-(+sp.value/3.6)*.1);draw();if(+dist.value<=5)clearInterval(timer)},100)};
+$('reset').onclick=()=>{clearInterval(timer);dist.value=150;draw()};
+draw();
+</script>
+</body>
+</html>
